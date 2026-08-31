@@ -1,0 +1,211 @@
+.shell {
+  min-height: 100vh;
+}
+
+.brand {
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.siteHeader {
+  border-bottom: 1px solid var(--cf-color-border);
+  padding: var(--cf-space-4) 0;
+}
+
+.main {
+  padding-block: clamp(2.5rem, 8vw, 6rem);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.intro {
+  max-width: 44rem;
+}
+
+.lede {
+  max-width: 48rem;
+}
+
+.statusDot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--cf-color-text-subtle, #a1a1aa);
+}
+
+.statusDotOnline {
+  background: #22c55e;
+}
+
+.workspace {
+  display: grid;
+  gap: var(--cf-space-6);
+  grid-template-columns: minmax(0, 1.15fr) minmax(19rem, 0.85fr);
+  align-items: start;
+}
+
+.settings,
+.workCard,
+.formPanel,
+.resultPanel,
+.chatInspector {
+  min-width: 0;
+}
+
+.resultCode :global(.cf-code-block__pre code) {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.cardHeader {
+  margin-bottom: 0.75rem;
+}
+
+.keyField,
+.sessionCode,
+.carrierPreview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.keyField {
+  font-size: 0.76rem;
+}
+
+.twoColumns,
+.formGrid,
+.chatLayout {
+  display: grid;
+  gap: var(--cf-space-4);
+}
+
+.twoColumns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.advanced {
+  border-top: 1px solid var(--cf-color-border, #d4d4d8);
+}
+
+.advanced summary {
+  padding-top: 0.75rem;
+  color: var(--cf-color-text-muted, #71717a);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.advancedBody {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.tabBody,
+.tokenSection {
+  padding-top: 1rem;
+}
+
+.formGrid {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.chatLayout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.conversation {
+  display: flex;
+  min-height: 34rem;
+  max-height: 70vh;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.messages {
+  flex: 1;
+  padding: 1rem;
+  overflow: auto;
+}
+
+.chatMessageButton {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.messageLabel,
+.messageText,
+.carrierPreview {
+  display: block;
+}
+
+.messageLabel {
+  margin-bottom: 0.25rem;
+  color: var(--cf-color-text-muted, #71717a);
+  font-size: 0.7rem;
+}
+
+.messageText {
+  margin-bottom: 0.4rem;
+}
+
+.carrierPreview {
+  max-height: 5rem;
+  overflow: auto;
+  color: var(--cf-color-text-muted, #71717a);
+  font-size: 0.68rem;
+  white-space: pre-wrap;
+}
+
+.composer {
+  padding: 1rem;
+}
+
+.sessionCode {
+  overflow: hidden;
+  color: var(--cf-color-text-muted, #71717a);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.siteFooter {
+  padding-block: var(--cf-space-4);
+  text-align: center;
+}
+
+@media (max-width: 780px) {
+  .headerProtocol {
+    display: none;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .main {
+    padding-block: var(--cf-space-8);
+  }
+
+  .cardHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .twoColumns {
+    grid-template-columns: 1fr;
+  }
+}

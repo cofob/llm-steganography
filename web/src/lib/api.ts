@@ -1,6 +1,3 @@
-export const API_URL =
-  process.env.NEXT_PUBLIC_STEG_API_URL ?? "http://127.0.0.1:8000";
-
 export type TokenCandidate = {
   token_id: number;
   text: string;
@@ -70,7 +67,7 @@ export function settingsPayload(settings: Settings) {
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",

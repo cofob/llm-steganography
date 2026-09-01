@@ -201,11 +201,12 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. The client uses `http://127.0.0.1:8000` by default. Set a
-different API address before the build when required:
+Open `http://localhost:3000`. Vinext proxies `/api/v1/*` to
+`http://127.0.0.1:8000` by default. Set a different server-side upstream address when
+required:
 
 ```bash
-NEXT_PUBLIC_STEG_API_URL=http://127.0.0.1:8000 npm run dev
+STEG_API_URL=https://steg-api.example.com npm run dev
 ```
 
 The web interface supports text and binary payloads, ECC, 2 to 10 groups, all generation

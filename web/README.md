@@ -19,8 +19,9 @@ npm install
 npm run dev
 ```
 
-`NEXT_PUBLIC_STEG_API_URL` sets the API address. The default value is
-`http://127.0.0.1:8000`. See `.env.example`.
+Vinext proxies same-origin `/api/v1/*` requests to Litestar. `STEG_API_URL` sets the
+server-side upstream address and defaults to `http://127.0.0.1:8000`. The upstream
+address and credentials are not included in the browser bundle. See `.env.example`.
 
 ## Check
 

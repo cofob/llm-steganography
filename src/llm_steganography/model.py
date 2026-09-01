@@ -25,6 +25,7 @@ from .constants import (
 )
 from .errors import DecodeError, GenerationError, TokenizerMismatchError
 from .partition import TokenPartitioner
+from .sglang_backend import generate_completion
 from .types import (
     DecodeResult,
     EncodeConfig,
@@ -55,28 +56,59 @@ def _torch_and_transformers() -> tuple[Any, Any, Any, Any, Any]:
     return torch, AutoModelForMultimodalLM, AutoTokenizer, LogitsProcessor, StoppingCriteria
 
 
+def _tokenizer_transformers() -> Any:
+    try:
+        from transformers import AutoTokenizer
+    except ImportError as error:  # pragma: no cover - packaging guards this path
+        raise GenerationError("tokenizer support requires transformers") from error
+    return AutoTokenizer
+
+
 @lru_cache(maxsize=1)
 def _tokenizer_source() -> tuple[str, str | None]:
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import snapshot_download, try_to_load_from_cache
 
-    try:
-        snapshot = snapshot_download(
-            MODEL_ID,
-            revision=MODEL_REVISION,
-            local_files_only=True,
-        )
-    except OSError:
-        return MODEL_ID, MODEL_REVISION
-    return snapshot, None
+    cached_file = try_to_load_from_cache(
+        MODEL_ID,
+        "tokenizer_config.json",
+        revision=MODEL_REVISION,
+    )
+    if isinstance(cached_file, str):
+        from pathlib import Path
+
+        cached_snapshot = Path(cached_file).parent
+        if (cached_snapshot / "tokenizer.json").is_file():
+            return str(cached_snapshot), None
+    downloaded_snapshot = snapshot_download(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        allow_patterns=[
+            "added_tokens.json",
+            "chat_template*.json",
+            "*.jinja",
+            "config.json",
+            "merges.txt",
+            "special_tokens_map.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+        ],
+        ignore_patterns=["*.bin", "*.safetensors"],
+    )
+    return downloaded_snapshot, None
 
 
 @lru_cache(maxsize=1)
 def load_tokenizer() -> Any:
     """Load the exact tokenizer revision used by protocol v1."""
 
-    _, _, auto_tokenizer, _, _ = _torch_and_transformers()
+    auto_tokenizer = _tokenizer_transformers()
     source, revision = _tokenizer_source()
-    return auto_tokenizer.from_pretrained(source, revision=revision)
+    return auto_tokenizer.from_pretrained(
+        source,
+        revision=revision,
+        local_files_only=True,
+    )
 
 
 def _is_formatting_text(text: str) -> bool:
@@ -84,11 +116,10 @@ def _is_formatting_text(text: str) -> bool:
 
 
 @lru_cache(maxsize=1)
-def _formatting_token_ids() -> frozenset[int]:
-    """Return tokens that decode only to Unicode whitespace."""
-
+def _token_classes() -> tuple[frozenset[int], frozenset[int]]:
     tokenizer = load_tokenizer()
     formatting: set[int] = set()
+    endings: set[int] = set()
     for token_id in range(len(tokenizer)):
         text = tokenizer.decode(
             [token_id],
@@ -97,7 +128,21 @@ def _formatting_token_ids() -> frozenset[int]:
         )
         if _is_formatting_text(text):
             formatting.add(token_id)
-    return frozenset(formatting)
+        if _SENTENCE_END.search(text):
+            endings.add(token_id)
+    return frozenset(formatting), frozenset(endings)
+
+
+def _formatting_token_ids() -> frozenset[int]:
+    """Return tokens that decode only to Unicode whitespace."""
+
+    return _token_classes()[0]
+
+
+def _sentence_end_token_ids() -> frozenset[int]:
+    """Return tokens that can end the visible response tail."""
+
+    return _token_classes()[1]
 
 
 def _channel_token_ids(
@@ -414,7 +459,7 @@ def _format_generation_prompt(tokenizer: Any, prompt: str) -> Any:
     )
 
 
-def _generate_block(
+def _generate_local_block(
     block: bytes,
     prompt: str,
     key: bytes,
@@ -624,6 +669,218 @@ def _generate_block(
         f"failed to generate round-trip-safe block {block_index + 1}/{block_count} after "
         f"{settings.roundtrip_retries + 1} attempts"
     ) from last_error
+
+
+def _symbol_mismatch_count(
+    token_ids: Sequence[int], symbols: Sequence[int], key: bytes, groups: int
+) -> int:
+    partitioner = TokenPartitioner(key, groups)
+    history: list[int] = []
+    mismatches = 0
+    for token_id, symbol in zip(token_ids, symbols, strict=False):
+        if partitioner.label_token(token_id, history) != symbol:
+            mismatches += 1
+        history.append(token_id)
+    return mismatches
+
+
+def _generate_sglang_block(
+    block: bytes,
+    prompt: str,
+    key: bytes,
+    block_seed: int,
+    settings: EncodeConfig,
+    show_progress: bool,
+    block_index: int,
+    block_count: int,
+    prefix_text: str,
+    expected_payload: bytes,
+    is_final: bool,
+) -> EncodeResult:
+    symbols = encode_block_bits(block, key, ecc=settings.ecc, groups=settings.groups)
+    transmission_tokens = len(symbols)
+    tokenizer = load_tokenizer()
+    formatting_token_ids = _formatting_token_ids()
+    special_ids = set(int(value) for value in tokenizer.all_special_ids)
+    eos_token_id = tokenizer.eos_token_id
+    if eos_token_id is None:
+        raise GenerationError("the pinned tokenizer does not define an EOS token")
+    tail_limit = settings.tail_max_tokens if is_final else 0
+    formatting_budget = max(_MIN_FORMATTING_TOKEN_BUDGET, transmission_tokens // 2)
+    custom_params: dict[str, object] = {
+        "key_hex": key.hex(),
+        "symbols": symbols,
+        "groups": settings.groups,
+        "delta": None if np.isinf(settings.delta) else settings.delta,
+        "formatting_token_ids": sorted(formatting_token_ids),
+        "special_token_ids": sorted(special_ids),
+        "sentence_end_token_ids": sorted(_sentence_end_token_ids()),
+        "eos_token_id": int(eos_token_id),
+        "tail_max_tokens": tail_limit,
+    }
+
+    last_error: Exception | None = None
+    for retry in range(settings.roundtrip_retries + 1):
+        attempt_seed = (block_seed + retry) & ((1 << 63) - 1)
+        progress_bar = tqdm(
+            total=transmission_tokens,
+            desc=(
+                f"Encoding block {block_index + 1}/{block_count}, "
+                f"attempt {retry + 1}"
+            ),
+            unit="token",
+            disable=not show_progress,
+        )
+        try:
+            completion = generate_completion(
+                prompt=_continuation_prompt(prompt, prefix_text[-12000:]),
+                custom_params=custom_params,
+                seed=attempt_seed,
+                max_tokens=(
+                    transmission_tokens + tail_limit + formatting_budget + 1
+                ),
+                config=settings,
+            )
+            text = completion.text
+            if is_final and not text.endswith(("\n", "\r")):
+                text += "\n"
+            roundtrip_ids = [
+                int(value)
+                for value in tokenizer.encode(text, add_special_tokens=False)
+            ]
+            roundtrip_channel_ids = _channel_token_ids(
+                roundtrip_ids, formatting_token_ids
+            )
+            progress_bar.update(
+                min(transmission_tokens, len(roundtrip_channel_ids))
+            )
+        except GenerationError as error:
+            last_error = error
+            continue
+        finally:
+            progress_bar.close()
+
+        if len(roundtrip_channel_ids) < transmission_tokens or (
+            not is_final and len(roundtrip_channel_ids) != transmission_tokens
+        ):
+            last_error = TokenizerMismatchError(
+                f"SGLang block needs {transmission_tokens} channel tokens but "
+                f"round-trip text has {len(roundtrip_channel_ids)}"
+            )
+            continue
+        try:
+            decoded_block, _ = decode_block_token_ids(
+                roundtrip_channel_ids[:transmission_tokens],
+                key,
+                ecc=settings.ecc,
+                groups=settings.groups,
+                formatting_token_ids=formatting_token_ids,
+            )
+        except DecodeError as error:
+            last_error = error
+            continue
+        if decoded_block != block:
+            last_error = DecodeError("SGLang carrier block self-check returned different data")
+            continue
+
+        prefix_ids = [
+            int(value)
+            for value in tokenizer.encode(prefix_text, add_special_tokens=False)
+        ]
+        combined_text = prefix_text + text
+        combined_ids = [
+            int(value)
+            for value in tokenizer.encode(combined_text, add_special_tokens=False)
+        ]
+        if combined_ids != prefix_ids + roundtrip_ids:
+            last_error = TokenizerMismatchError(
+                f"joining block {block_index + 1} changed tokenization at its boundary"
+            )
+            continue
+        if is_final:
+            try:
+                combined_decoded = decode_token_ids(
+                    combined_ids,
+                    key,
+                    ecc=settings.ecc,
+                    groups=settings.groups,
+                    formatting_token_ids=formatting_token_ids,
+                )
+            except DecodeError as error:
+                last_error = TokenizerMismatchError("joined carrier failed final decode")
+                last_error.__cause__ = error
+                continue
+            if combined_decoded.payload != expected_payload:
+                last_error = DecodeError("joined carrier self-check returned different data")
+                continue
+
+        diagnostics: tuple[TokenDiagnostic, ...] = ()
+        if settings.diagnostics:
+            diagnostics = _build_token_diagnostics(
+                token_ids=roundtrip_ids,
+                generated_token_ids=roundtrip_ids,
+                score_steps=(),
+                group_steps=(),
+                tokenizer=tokenizer,
+                key=key,
+                groups=settings.groups,
+                formatting_token_ids=formatting_token_ids,
+                transmission_tokens=transmission_tokens,
+                block_index=block_index,
+                torch=None,
+            )
+        return EncodeResult(
+            text=text,
+            token_count=len(roundtrip_ids),
+            fallback_count=_symbol_mismatch_count(
+                roundtrip_channel_ids[:transmission_tokens],
+                symbols,
+                key,
+                settings.groups,
+            ),
+            seed=attempt_seed,
+            retry_count=retry,
+            diagnostics=diagnostics,
+        )
+
+    raise GenerationError(
+        f"failed to generate round-trip-safe SGLang block "
+        f"{block_index + 1}/{block_count} after "
+        f"{settings.roundtrip_retries + 1} attempts"
+    ) from last_error
+
+
+def _generate_block(
+    block: bytes,
+    prompt: str,
+    key: bytes,
+    block_seed: int,
+    settings: EncodeConfig,
+    show_progress: bool,
+    block_index: int,
+    block_count: int,
+    prefix_text: str,
+    expected_payload: bytes,
+    is_final: bool,
+) -> EncodeResult:
+    generator = (
+        _generate_sglang_block
+        if settings.provider == "sglang"
+        else _generate_local_block
+    )
+    return generator(
+        block,
+        prompt,
+        key,
+        block_seed,
+        settings,
+        show_progress,
+        block_index,
+        block_count,
+        prefix_text,
+        expected_payload,
+        is_final,
+    )
 
 
 def generate_carrier(

@@ -5,6 +5,7 @@ import binascii
 import os
 from dataclasses import asdict, dataclass
 from threading import RLock
+from typing import Literal, cast
 from uuid import uuid4
 
 from litestar import Litestar, delete, get, post
@@ -54,6 +55,9 @@ class EncodeRequest:
     tail_max_tokens: int = 64
     roundtrip_retries: int = 3
     device: str | None = None
+    provider: Literal["local", "sglang"] | None = None
+    sglang_url: str | None = None
+    sglang_model: str | None = None
 
 
 @dataclass(slots=True)
@@ -76,6 +80,9 @@ class CreateChatRequest:
     tail_max_tokens: int = 64
     roundtrip_retries: int = 3
     device: str | None = None
+    provider: Literal["local", "sglang"] | None = None
+    sglang_url: str | None = None
+    sglang_model: str | None = None
 
 
 @dataclass(slots=True)
@@ -125,7 +132,17 @@ def _config(
     tail_max_tokens: int,
     roundtrip_retries: int,
     device: str | None,
+    provider: Literal["local", "sglang"] | None,
+    sglang_url: str | None,
+    sglang_model: str | None,
 ) -> EncodeConfig:
+    provider_value = provider or os.getenv("LLM_STEG_PROVIDER", "local")
+    if provider_value not in {"local", "sglang"}:
+        raise ValueError("LLM_STEG_PROVIDER must be 'local' or 'sglang'")
+    selected_provider = cast(Literal["local", "sglang"], provider_value)
+    selected_model = (
+        sglang_model or os.getenv("LLM_STEG_SGLANG_MODEL") or MODEL_ID
+    )
     return EncodeConfig(
         ecc=ecc,
         groups=groups,
@@ -136,6 +153,10 @@ def _config(
         roundtrip_retries=roundtrip_retries,
         device=device,
         diagnostics=True,
+        provider=selected_provider,
+        sglang_url=sglang_url or os.getenv("LLM_STEG_SGLANG_URL"),
+        sglang_api_key=os.getenv("LLM_STEG_SGLANG_API_KEY"),
+        sglang_model=selected_model,
     )
 
 
@@ -185,6 +206,7 @@ def health() -> dict[str, object]:
         "status": "ok",
         "model": MODEL_ID,
         "revision": MODEL_REVISION,
+        "provider": os.getenv("LLM_STEG_PROVIDER", "local"),
         "groups": {"min": 2, "max": 10, "default": 2},
     }
 
@@ -212,6 +234,9 @@ def encode(data: EncodeRequest) -> dict[str, object]:
                     tail_max_tokens=data.tail_max_tokens,
                     roundtrip_retries=data.roundtrip_retries,
                     device=data.device,
+                    provider=data.provider,
+                    sglang_url=data.sglang_url,
+                    sglang_model=data.sglang_model,
                 ),
             )
         return _encode_response(result)
@@ -257,6 +282,9 @@ def create_chat(data: CreateChatRequest) -> dict[str, str]:
             tail_max_tokens=data.tail_max_tokens,
             roundtrip_retries=data.roundtrip_retries,
             device=data.device,
+            provider=data.provider,
+            sglang_url=data.sglang_url,
+            sglang_model=data.sglang_model,
         )
         chat = SteganographyChat(
             key,

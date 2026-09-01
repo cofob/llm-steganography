@@ -1,11 +1,86 @@
 import pytest
 
+import llm_steganography.model as model_module
 from llm_steganography import decode_carrier, generate_carrier
 from llm_steganography.channel import encoded_symbol_count
 from llm_steganography.codec import frame_payload
 from llm_steganography.constants import BLOCK_PAYLOAD_SIZE, RS_CODEWORD_SIZE
 from llm_steganography.model import _format_generation_prompt, _is_formatting_text
 from llm_steganography.types import EncodeConfig
+
+
+def test_tokenizer_snapshot_excludes_model_weights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request: dict[str, object] = {}
+
+    def fake_cache_lookup(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        return None
+
+    def fake_snapshot_download(*args: object, **kwargs: object) -> str:
+        request["args"] = args
+        request["kwargs"] = kwargs
+        return "/tokenizer-only-snapshot"
+
+    monkeypatch.setattr(
+        "huggingface_hub.try_to_load_from_cache", fake_cache_lookup
+    )
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+    model_module._tokenizer_source.cache_clear()
+    try:
+        assert model_module._tokenizer_source() == (
+            "/tokenizer-only-snapshot",
+            None,
+        )
+    finally:
+        model_module._tokenizer_source.cache_clear()
+
+    options = request["kwargs"]
+    assert isinstance(options, dict)
+    assert options["ignore_patterns"] == ["*.bin", "*.safetensors"]
+    allowed = options["allow_patterns"]
+    assert isinstance(allowed, list)
+    assert "tokenizer.json" in allowed
+    assert "tokenizer_config.json" in allowed
+    assert not any(
+        str(pattern).endswith((".bin", ".safetensors")) for pattern in allowed
+    )
+
+
+def test_tokenizer_loader_never_calls_model_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(source: str, **options: object) -> str:
+            calls["source"] = source
+            calls["options"] = options
+            return "tokenizer"
+
+    monkeypatch.setattr(model_module, "_tokenizer_transformers", lambda: AutoTokenizer)
+    monkeypatch.setattr(
+        model_module,
+        "_tokenizer_source",
+        lambda: ("/tokenizer-only-snapshot", None),
+    )
+    monkeypatch.setattr(
+        model_module,
+        "_load_model",
+        lambda device: pytest.fail(f"model loader called for {device}"),
+    )
+    model_module.load_tokenizer.cache_clear()
+    try:
+        assert model_module.load_tokenizer() == "tokenizer"
+    finally:
+        model_module.load_tokenizer.cache_clear()
+
+    assert calls == {
+        "source": "/tokenizer-only-snapshot",
+        "options": {"revision": None, "local_files_only": True},
+    }
 
 
 @pytest.mark.parametrize("text", [" ", "\t", "\n", " \t\r\n", "\u2003"])

@@ -50,6 +50,9 @@ export type Settings = {
   tailMaxTokens: number;
   roundtripRetries: number;
   device: string;
+  provider: "" | "local" | "sglang";
+  sglangUrl: string;
+  sglangModel: string;
 };
 
 export function settingsPayload(settings: Settings) {
@@ -63,6 +66,9 @@ export function settingsPayload(settings: Settings) {
     tail_max_tokens: settings.tailMaxTokens,
     roundtrip_retries: settings.roundtripRetries,
     device: settings.device.trim() || null,
+    provider: settings.provider || null,
+    sglang_url: settings.sglangUrl.trim() || null,
+    sglang_model: settings.sglangModel.trim() || null,
   };
 }
 

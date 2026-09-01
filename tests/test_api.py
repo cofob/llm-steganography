@@ -55,9 +55,13 @@ def test_encode_returns_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
         assert seed == 7
         assert options["config"].groups == 10
         assert options["config"].diagnostics is True
+        assert options["config"].provider == "sglang"
+        assert options["config"].sglang_url == "https://inference.example/v1"
+        assert options["config"].sglang_api_key == "server-secret"
         return EncodeResult("carrier\n", 2, 0, 7, 0, (_diagnostic(),))
 
     monkeypatch.setattr(api_module, "generate_carrier", fake_generate)
+    monkeypatch.setenv("LLM_STEG_SGLANG_API_KEY", "server-secret")
     with TestClient(api_module.app) as client:
         response = client.post(
             "/api/v1/encode",
@@ -67,6 +71,8 @@ def test_encode_returns_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
                 "payload_text": "secret",
                 "seed": 7,
                 "groups": 10,
+                "provider": "sglang",
+                "sglang_url": "https://inference.example/v1",
             },
         )
     assert response.status_code == 201

@@ -6,10 +6,16 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from .chat import DEFAULT_CHAT_PROMPT, SteganographyChat
-from .constants import DEFAULT_GROUP_COUNT, KEY_SIZE, MAX_GROUP_COUNT, MIN_GROUP_COUNT
+from .constants import (
+    DEFAULT_GROUP_COUNT,
+    KEY_SIZE,
+    MAX_GROUP_COUNT,
+    MIN_GROUP_COUNT,
+    MODEL_ID,
+)
 from .crypto import generate_key, validate_key
 from .errors import SteganographyError
 from .model import decode_carrier, generate_carrier
@@ -32,6 +38,43 @@ def _write_new_key(path: Path, key: bytes) -> None:
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
         raise
+
+
+def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-P",
+        "--provider",
+        "--backend",
+        choices=("local", "sglang"),
+        default=os.getenv("LLM_STEG_PROVIDER", "local"),
+        help="generation provider; default: LLM_STEG_PROVIDER or local",
+    )
+    parser.add_argument(
+        "-u",
+        "--sglang-url",
+        "--api-base",
+        default=os.getenv("LLM_STEG_SGLANG_URL"),
+        help="OpenAI API base URL, such as http://host:30000/v1",
+    )
+    parser.add_argument(
+        "-M",
+        "--sglang-model",
+        "--model",
+        default=os.getenv("LLM_STEG_SGLANG_MODEL", MODEL_ID),
+        help=f"served model name; default: {MODEL_ID}",
+    )
+
+
+def _encode_config(args: argparse.Namespace) -> EncodeConfig:
+    return EncodeConfig(
+        ecc=cast(bool, args.ecc),
+        groups=cast(int, args.groups),
+        delta=cast(float, args.delta),
+        provider=cast(Literal["local", "sglang"], args.provider),
+        sglang_url=cast(str | None, args.sglang_url),
+        sglang_api_key=os.getenv("LLM_STEG_SGLANG_API_KEY"),
+        sglang_model=cast(str, args.sglang_model),
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -68,6 +111,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=float("inf"),
         help="maximum best-token logit loss; default: strict symbol encoding",
     )
+    _add_provider_arguments(encode)
 
     decode = subparsers.add_parser("decode", help="recover a payload")
     decode.add_argument("-k", "--key", "--key-file", dest="key_file", required=True, type=Path)
@@ -110,6 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=float("inf"),
         help="maximum best-token logit loss; default: strict symbol encoding",
     )
+    _add_provider_arguments(chat)
     return parser
 
 
@@ -141,11 +186,7 @@ def _run_chat(args: argparse.Namespace, key: bytes) -> None:
     chat = SteganographyChat(
         key,
         prompt=cast(str, args.prompt),
-        config=EncodeConfig(
-            ecc=cast(bool, args.ecc),
-            groups=cast(int, args.groups),
-            delta=cast(float, args.delta),
-        ),
+        config=_encode_config(args),
         show_progress=True,
     )
     print(
@@ -208,7 +249,7 @@ def _run(args: argparse.Namespace) -> None:
             args.prompt,
             key,
             seed=args.seed,
-            config=EncodeConfig(ecc=args.ecc, groups=args.groups, delta=args.delta),
+            config=_encode_config(args),
             show_progress=True,
         )
         args.output.write_text(result.text, encoding="utf-8")

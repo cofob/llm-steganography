@@ -70,12 +70,16 @@ const DEFAULT_SETTINGS: Settings = {
   tailMaxTokens: 64,
   roundtripRetries: 3,
   device: "",
+  provider: "",
+  sglangUrl: "",
+  sglangModel: "Qwen/Qwen3.8-27B",
 };
 
 type Health = {
   status: string;
   model: string;
   revision: string;
+  provider: string;
 };
 
 type ChatItem = {
@@ -235,6 +239,21 @@ export function StegApp() {
               <details className={styles.advanced}>
                 <summary>Generation settings</summary>
                 <div className={styles.advancedBody}>
+                  <Select
+                    label="Generation provider"
+                    value={settings.provider}
+                    onChange={(event) => updateSetting("provider", event.target.value as Settings["provider"])}
+                  >
+                    <option value="">Server default{health ? ` · ${health.provider}` : ""}</option>
+                    <option value="sglang">SGLang API</option>
+                    <option value="local">Local weights</option>
+                  </Select>
+                  {settings.provider === "sglang" ? (
+                    <>
+                      <TextField label="SGLang API base" hint="OpenAI-compatible /v1 URL" value={settings.sglangUrl} onChange={(event) => updateSetting("sglangUrl", event.target.value)} placeholder="http://host:30000/v1" />
+                      <TextField label="Served model" value={settings.sglangModel} onChange={(event) => updateSetting("sglangModel", event.target.value)} />
+                    </>
+                  ) : null}
                   <TextField
                     label="Threshold δ"
                     hint="Empty: strict mask"
@@ -248,7 +267,9 @@ export function StegApp() {
                     <TextField label="Tail" type="number" min="0" value={settings.tailMaxTokens} onChange={(event) => updateSetting("tailMaxTokens", Number(event.target.value))} />
                     <TextField label="Retries" type="number" min="0" value={settings.roundtripRetries} onChange={(event) => updateSetting("roundtripRetries", Number(event.target.value))} />
                   </div>
-                  <TextField label="Device" hint="Empty: auto" value={settings.device} onChange={(event) => updateSetting("device", event.target.value)} placeholder="cpu, mps, cuda" />
+                  {settings.provider !== "sglang" ? (
+                    <TextField label="Local device" hint="Empty: auto" value={settings.device} onChange={(event) => updateSetting("device", event.target.value)} placeholder="cpu, mps, cuda" />
+                  ) : null}
                 </div>
               </details>
             </Stack>

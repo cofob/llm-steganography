@@ -1,6 +1,6 @@
 """Public result and configuration types."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from .constants import (
@@ -12,6 +12,7 @@ from .constants import (
     DEFAULT_TOP_P,
     MAX_GROUP_COUNT,
     MIN_GROUP_COUNT,
+    MODEL_ID,
 )
 
 
@@ -28,6 +29,10 @@ class EncodeConfig:
     tail_max_tokens: int = DEFAULT_TAIL_MAX_TOKENS
     roundtrip_retries: int = DEFAULT_ROUNDTRIP_RETRIES
     device: str | None = None
+    provider: Literal["local", "sglang"] = "local"
+    sglang_url: str | None = None
+    sglang_api_key: str | None = field(default=None, repr=False)
+    sglang_model: str = MODEL_ID
 
     def __post_init__(self) -> None:
         if self.delta < 0:
@@ -44,6 +49,10 @@ class EncodeConfig:
             raise ValueError("tail_max_tokens must not be negative")
         if self.roundtrip_retries < 0:
             raise ValueError("roundtrip_retries must not be negative")
+        if self.provider not in {"local", "sglang"}:
+            raise ValueError("provider must be 'local' or 'sglang'")
+        if self.provider == "sglang" and not self.sglang_url:
+            raise ValueError("sglang_url is required for the sglang provider")
 
 
 @dataclass(frozen=True, slots=True)

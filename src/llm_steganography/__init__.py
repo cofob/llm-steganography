@@ -1,4 +1,4 @@
-"""Keyed steganography for local language models."""
+"""Keyed steganography for local and hosted language models."""
 
 from .chat import DEFAULT_CHAT_PROMPT, SteganographyChat
 from .crypto import generate_key

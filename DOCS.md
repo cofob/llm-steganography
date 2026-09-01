@@ -1,14 +1,15 @@
 # LLM Steganography documentation
 
-This project implements experimental keyed steganography for a local language model.
+This project implements experimental keyed steganography for a language model.
 Each non-formatting carrier token transmits one channel symbol. A secret 32-byte key
 partitions the vocabulary into 2 to 10 groups. The default two-group mode transmits one
 bit per channel token.
 
-The encoder uses the pinned
-[Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) model and tokenizer revision.
-Encoding loads the model weights. Decoding needs only the tokenizer, carrier text, key,
-group count, and ECC setting.
+The encoder and decoder use the pinned
+[Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) tokenizer revision
+`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. Generation can use local weights or an
+OpenAI-compatible SGLang server. Decoding loads only the tokenizer. It does not load
+model weights.
 
 ## Format
 
@@ -89,6 +90,67 @@ uv run llm-steg encode -k local/key -i payload.bin -p "Talk about birds" -o loca
 uv run llm-steg decode -k local/key -i local/out -o decoded.bin
 ```
 
+## SGLang provider
+
+The custom logits processor is a separate Python distribution in
+`packages/sglang-processor`. Install this package in the SGLang environment. The
+SGLang server must use the pinned model revision and must allow custom logits
+processors:
+
+```bash
+uv build --package llm-steganography-sglang
+pip install dist/llm_steganography_sglang-0.1.0-py3-none-any.whl
+python -m sglang.launch_server \
+  --model-path Qwen/Qwen3.8-27B \
+  --revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 \
+  --enable-custom-logit-processor
+```
+
+Only enable custom logits processors on a trusted SGLang server. This SGLang option
+allows requests to send executable Python code.
+
+Use the hosted provider from the CLI:
+
+```bash
+export LLM_STEG_PROVIDER=sglang
+export LLM_STEG_SGLANG_URL=http://127.0.0.1:30000/v1
+export LLM_STEG_SGLANG_API_KEY=optional-api-key
+uv run llm-steg encode -k local/key -m test -p "Talk about birds" -o local/out
+```
+
+The API key is read from the environment. The CLI does not accept it as an argument,
+so it does not expose the key in the process list. You can also use `--provider`,
+`--sglang-url`, and `--sglang-model`. The base URL must include the OpenAI-compatible
+`/v1` path.
+
+The client sends `enable_thinking=false`, the serialized processor, and per-request
+channel parameters to `/chat/completions`. It tokenizes the returned text with the
+pinned local tokenizer and rejects a result that does not pass the complete local
+decode check. Token diagnostics from hosted generation include token groups and channel
+positions. Raw logits and probabilities are not available through the standard hosted
+response, so these diagnostic fields are empty.
+
+The SGLang server receives the steganography key because the logits processor needs it.
+Use TLS and a server that you trust. The decoder does not contact SGLang and does not
+load the model weights:
+
+```bash
+uv run llm-steg decode -k local/key -i local/out -t
+```
+
+Use the provider in the Python API:
+
+```python
+from llm_steganography import EncodeConfig, generate_carrier
+
+config = EncodeConfig(
+    provider="sglang",
+    sglang_url="https://inference.example/v1",
+    sglang_api_key="api-key",
+)
+carrier = generate_carrier(b"secret", "Talk about birds", key, config=config)
+```
+
 ## Chat mode
 
 ```bash
@@ -128,8 +190,9 @@ non-formatting channel tokens. Whitespace does not move the bar, and the open ta
 generated after the channel is full.
 
 The encoder passes each generation instruction as a `user` message through the pinned
-Qwen3.5-4B chat template. It sets `enable_thinking=False`, so the template emits the
-closed thinking prefix and the model starts the visible response directly.
+Qwen3.8-27B chat template. It sets `enable_thinking=False`, so the model starts the
+visible response without a reasoning trace. SGLang receives the same template option
+through `chat_template_kwargs`.
 
 ## Python API
 
@@ -190,6 +253,11 @@ stateful chained chat:
 uv run llm-steg-api
 ```
 
+Set `LLM_STEG_PROVIDER`, `LLM_STEG_SGLANG_URL`, `LLM_STEG_SGLANG_API_KEY`, and
+`LLM_STEG_SGLANG_MODEL` on the Litestar process to use SGLang by default. A web request
+can select the provider, URL, and served model. The SGLang API key stays on the Litestar
+server and is never sent to the browser.
+
 The Vinext and Vite application is in `web/`. It uses
 [`cofob/design-system`](https://github.com/cofob/design-system). Pinned design-system
 packages are stored in `web/vendor`, so installation does not require a GitHub Packages
@@ -228,7 +296,8 @@ uv run mypy
 cd web && npm run lint && npm run typecheck && npm run build
 ```
 
-Slow tests load the model. The benchmark is in `benchmarks/compare.py`.
+Slow tests use the local model backend and load the model weights. The benchmark is in
+`benchmarks/compare.py`.
 
 ## Citation
 

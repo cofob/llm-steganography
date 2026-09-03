@@ -95,7 +95,7 @@ uv run llm-steg decode -k local/key -i local/out -o decoded.bin
 The custom logits processor is a separate Python distribution in
 `packages/sglang-processor`. Install this package in the SGLang environment. The
 SGLang server must use the pinned model revision and must allow custom logits
-processors:
+processors. It must not use speculative decoding:
 
 ```bash
 uv build --package llm-steganography-sglang
@@ -105,6 +105,13 @@ python -m sglang.launch_server \
   --revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 \
   --enable-custom-logit-processor
 ```
+
+Do not add `--speculative-algorithm`, `--speculative-draft-model-path`, or
+`--speculative-num-draft-tokens` to this server. SGLang gives a speculative verify
+batch one parameter object for multiple draft-token logits rows. The stateful channel
+cannot reconstruct the draft-token history for those rows. The client checks
+`/server_info` when that endpoint is available and rejects an incompatible server before
+generation starts.
 
 Only enable custom logits processors on a trusted SGLang server. This SGLang option
 allows requests to send executable Python code.

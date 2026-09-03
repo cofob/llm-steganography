@@ -3,4 +3,6 @@
 This package contains the custom logits processor for the
 [`llm-steganography`](https://github.com/cofob/llm-steganography) SGLang backend.
 Install it in the SGLang server environment and start SGLang with
-`--enable-custom-logit-processor`.
+`--enable-custom-logit-processor`. Do not enable speculative decoding on that server.
+Speculative verify batches do not provide the draft-token history that this stateful
+processor needs.

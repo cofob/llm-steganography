@@ -11,6 +11,7 @@ from llm_steganography_sglang import (
 )
 from llm_steganography_sglang.processor import _TokenPartitioner
 
+from llm_steganography.errors import GenerationError
 from llm_steganography.partition import TokenPartitioner
 from llm_steganography.sglang_backend import SGLangCompletion, generate_completion
 from llm_steganography.types import EncodeConfig
@@ -99,6 +100,10 @@ def test_sglang_request_uses_openai_chat_and_custom_processor(
         def __exit__(self, *args: object) -> None:
             return None
 
+        def get(self, url: str, **options: Any) -> object:
+            del url, options
+            return type("ServerInfoResponse", (), {"status_code": 404})()
+
         def post(self, url: str, **options: Any) -> Response:
             recorded["url"] = url
             recorded["request"] = options
@@ -125,6 +130,55 @@ def test_sglang_request_uses_openai_chat_and_custom_processor(
     assert request["json"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert request["json"]["custom_params"] == {"symbols": [0, 1]}
     assert "custom_logit_processor" in request["json"]
+
+
+def test_sglang_request_rejects_speculative_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: dict[str, Any] = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self) -> dict[str, object]:
+            return {"speculative_algorithm": "DFLASH"}
+
+    class Client:
+        def __init__(self, **options: Any) -> None:
+            del options
+
+        def __enter__(self) -> "Client":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def get(self, url: str, **options: Any) -> Response:
+            recorded["url"] = url
+            recorded["headers"] = options["headers"]
+            return Response()
+
+        def post(self, url: str, **options: Any) -> Response:
+            pytest.fail(f"generation request reached incompatible server: {url} {options}")
+
+    monkeypatch.setattr("llm_steganography.sglang_backend.httpx.Client", Client)
+    config = EncodeConfig(
+        provider="sglang",
+        sglang_url="https://inference.example/v1/",
+        sglang_api_key="secret",
+    )
+
+    with pytest.raises(GenerationError, match="speculative decoding is not supported"):
+        generate_completion(
+            prompt="Talk about birds",
+            custom_params={"symbols": [0, 1]},
+            seed=7,
+            max_tokens=20,
+            config=config,
+        )
+
+    assert recorded["url"] == "https://inference.example/server_info"
+    assert recorded["headers"]["Authorization"] == "Bearer secret"
 
 
 def test_sglang_generation_uses_only_the_local_tokenizer(

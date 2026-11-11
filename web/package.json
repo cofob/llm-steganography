@@ -16,7 +16,7 @@
     "lucide-react": "^1.37.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-server-dom-webpack": "^19.2.8",
+    "react-server-dom-webpack": "^19.3.1",
     "vinext": "^1.0.0-beta.8"
   },
   "devDependencies": {
